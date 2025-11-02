@@ -12,33 +12,27 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
-# إعداد التسجيل (Logs)
+# إعداد التسجيل
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# التوكن
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا"
-
-# مسار السكربت الأساسي
 SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 
-# --------------------------- دالة موحدة لإرسال الرسائل ---------------------------
-def send_message(chat_id, context: CallbackContext, text: str):
-    """
-    إرسال أي رسالة مع زر إنشاء كويز جديد دائمًا.
-    يعمل مع الضغط على الزر أو أي رسالة نصية.
-    """
+# --------------------------- دالة إرسال الرسائل مع الزر ---------------------------
+def send_message(chat_id: int, context: CallbackContext, text: str):
+    """إرسال أي رسالة مع زر إنشاء كويز جديد دائمًا"""
     keyboard = [[InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
-def send_welcome_message(update_or_context, context: CallbackContext):
+def send_welcome(chat_id: int, context: CallbackContext):
     """رسالة الترحيب"""
-    welcome_message = (
+    welcome_text = (
         "👋 أهلاً بك!\n"
         "أرسل لي الآن ملف الأسئلة (.txt)\n"
         "أو الصق الأسئلة مباشرة في الرسالة.\n\n"
@@ -48,88 +42,80 @@ def send_welcome_message(update_or_context, context: CallbackContext):
         "إجابة: القاهرة\n"
         "نقاط: 1"
     )
-
-    if isinstance(update_or_context, Update):
-        chat_id = update_or_context.effective_chat.id
-    else:
-        chat_id = update_or_context  # إذا تم تمرير chat_id مباشرة
-
-    send_message(chat_id, context, welcome_message)
+    send_message(chat_id, context, welcome_text)
 
 
-# --------------------------- المرحلة 1: الترحيب ---------------------------
+# --------------------------- الأوامر ---------------------------
 def start(update: Update, context: CallbackContext):
-    """رسالة الترحيب عند /start"""
+    """رسالة /start"""
     context.user_data.clear()
-    send_welcome_message(update, context)
+    chat_id = update.effective_chat.id
+    send_welcome(chat_id, context)
     context.user_data["step"] = "awaiting_questions"
 
 
 def button_handler(update: Update, context: CallbackContext):
-    """معالجة الضغط على زر Inline"""
+    """تعامل مع الضغط على زر Inline"""
     query = update.callback_query
-    query.answer()  # يجب دائمًا الرد على callback_query
-
-    # مسح بيانات المستخدم
+    query.answer()
     context.user_data.clear()
-
-    # إرسال رسالة بدء كويز جديد
-    send_message(query.effective_chat.id, context, "🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
+    chat_id = query.message.chat.id
+    send_message(chat_id, context, "🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
     context.user_data["step"] = "awaiting_questions"
 
 
-# --------------------------- المرحلة 2: استلام الأسئلة ---------------------------
+# --------------------------- استقبال الملفات والنصوص ---------------------------
 def handle_document(update: Update, context: CallbackContext):
-    """عند إرسال ملف .txt"""
+    chat_id = update.effective_chat.id
     if context.user_data.get("step") != "awaiting_questions":
-        send_message(update.effective_chat.id, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+        send_message(chat_id, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
         return
 
     file = update.message.document
     if not file.file_name.endswith(".txt"):
-        send_message(update.effective_chat.id, context, "⚠️ من فضلك أرسل ملف .txt فقط.")
+        send_message(chat_id, context, "⚠️ من فضلك أرسل ملف .txt فقط.")
         return
 
     context.user_data["file_id"] = file.file_id
     context.user_data["step"] = "awaiting_quiz_name"
-    send_message(update.effective_chat.id, context, "🎯 من فضلك أدخل اسم الكويز:")
+    send_message(chat_id, context, "🎯 من فضلك أدخل اسم الكويز:")
 
 
 def handle_text(update: Update, context: CallbackContext):
-    """عند إرسال الأسئلة نصيًا أو إدخال اسم الكويز"""
+    chat_id = update.effective_chat.id
     step = context.user_data.get("step")
 
     if step == "awaiting_questions":
         text = update.message.text.strip()
         if not text:
-            send_message(update.effective_chat.id, context, "⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
+            send_message(chat_id, context, "⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
             return
         context.user_data["questions_text"] = text
         context.user_data["step"] = "awaiting_quiz_name"
-        send_message(update.effective_chat.id, context, "🎯 من فضلك أدخل اسم الكويز:")
+        send_message(chat_id, context, "🎯 من فضلك أدخل اسم الكويز:")
         return
 
     elif step == "awaiting_quiz_name":
         quiz_name = update.message.text.strip()
         if not quiz_name:
-            send_message(update.effective_chat.id, context, "⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى:")
+            send_message(chat_id, context, "⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى:")
             return
         context.user_data["quiz_name"] = quiz_name
         start_quiz_creation(update, context)
         return
 
     else:
-        send_message(update.effective_chat.id, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+        send_message(chat_id, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
 
 
-# --------------------------- المرحلة 3: الإنشاء ---------------------------
+# --------------------------- إنشاء الكويز ---------------------------
 def start_quiz_creation(update: Update, context: CallbackContext):
-    """إنشاء النموذج"""
+    chat_id = update.effective_chat.id
     quiz_name = context.user_data.get("quiz_name")
     text = context.user_data.get("questions_text")
     file_id = context.user_data.get("file_id")
 
-    send_message(update.effective_chat.id, context, "⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
+    send_message(chat_id, context, "⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
 
     temp_path = None
     try:
@@ -142,7 +128,7 @@ def start_quiz_creation(update: Update, context: CallbackContext):
             temp_path = os.path.join(tempfile.gettempdir(), "questions.txt")
             file.download(temp_path)
         else:
-            send_message(update.effective_chat.id, context, "⚠️ لم يتم العثور على الأسئلة.")
+            send_message(chat_id, context, "⚠️ لم يتم العثور على الأسئلة.")
             return
 
         result = subprocess.run(
@@ -154,12 +140,12 @@ def start_quiz_creation(update: Update, context: CallbackContext):
         error = result.stderr.strip()
 
         if result.returncode == 0:
-            send_message(update.effective_chat.id, context, "✅ تم إنشاء الكويز بنجاح!\n\n" + output)
+            send_message(chat_id, context, "✅ تم إنشاء الكويز بنجاح!\n\n" + output)
         else:
-            send_message(update.effective_chat.id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
+            send_message(chat_id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
 
     except Exception as e:
-        send_message(update.effective_chat.id, context, f"⚠️ حدث خطأ غير متوقع: {e}")
+        send_message(chat_id, context, f"⚠️ حدث خطأ غير متوقع: {e}")
 
     finally:
         context.user_data.clear()
@@ -167,19 +153,14 @@ def start_quiz_creation(update: Update, context: CallbackContext):
             os.remove(temp_path)
 
 
-# --------------------------- المرحلة 4: التشغيل ---------------------------
+# --------------------------- تشغيل البوت ---------------------------
 def main():
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # الأوامر
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(button_handler))
-
-    # استقبال ملف txt
     dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), handle_document))
-
-    # استقبال الرسائل النصية
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
 
     updater.start_polling()
