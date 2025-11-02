@@ -1,11 +1,9 @@
 """
 google_forms_automator_fixed.py
-الإصدار النهائي المطور ✨
-----------------------------------------------
-✅ إنشاء Google Form بالعنوان فقط.
-✅ إرسال رابط العرض (viewform) وليس رابط التعديل.
-✅ يقبل الأسئلة من ملف .txt أو من نص مباشر.
-✅ يطلب من المستخدم إدخال اسم الكويز قبل الإنشاء.
+الإصدار الذكي (يدعم متغيرات البيئة في Railway) ✅
+-------------------------------------------------
+- إذا لم يجد credentials.json أو token.json في النظام،
+  يقوم بإنشائهما من متغيرات البيئة CREDENTIALS_JSON و TOKEN_JSON.
 """
 
 import os
@@ -21,12 +19,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# إعداد الصلاحيات
 SCOPES = ["https://www.googleapis.com/auth/forms.body"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
 
-# إعداد السجلات
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -34,19 +30,47 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def ensure_credentials_files():
+    """يتحقق من وجود ملفات Google API أو إنشائها من متغيرات البيئة"""
+    # credentials.json
+    if not os.path.exists(CREDENTIALS_FILE):
+        env_data = os.getenv("CREDENTIALS_JSON")
+        if env_data:
+            try:
+                with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
+                    f.write(env_data)
+                logger.info("✅ تم إنشاء credentials.json من متغير البيئة.")
+            except Exception as e:
+                logger.error("⚠️ فشل إنشاء credentials.json: %s", e)
+        else:
+            logger.warning("⚠️ لم يتم العثور على CREDENTIALS_JSON في المتغيرات.")
+
+    # token.json
+    if not os.path.exists(TOKEN_FILE):
+        env_token = os.getenv("TOKEN_JSON")
+        if env_token:
+            try:
+                with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+                    f.write(env_token)
+                logger.info("✅ تم إنشاء token.json من متغير البيئة.")
+            except Exception as e:
+                logger.error("⚠️ فشل إنشاء token.json: %s", e)
+
+
 def sanitize_text(s: str) -> str:
-    """تنظيف النص من رموز غير صالحة"""
     if s is None:
         return ""
     return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", str(s))
 
 
-def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
+def get_forms_service():
     """تجهيز خدمة Google Forms"""
+    ensure_credentials_files()
+
     creds = None
-    if os.path.exists(token_file):
+    if os.path.exists(TOKEN_FILE):
         try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
             logger.info("Loaded credentials from token file.")
         except Exception as e:
             logger.warning("Error loading token: %s", e)
@@ -56,25 +80,22 @@ def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not os.path.exists(credentials_file):
+            if not os.path.exists(CREDENTIALS_FILE):
                 raise FileNotFoundError("ملف credentials.json مفقود.")
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
-            with open(token_file, "w") as token:
+            with open(TOKEN_FILE, "w") as token:
                 token.write(creds.to_json())
             logger.info("Saved new token.")
     return build("forms", "v1", credentials=creds)
 
 
+# 🔽 بقية الكود كما في آخر إصدار (نفس المميزات السابقة) 🔽
+
 def create_form(service, title, description=None):
-    """
-    إنشاء نموذج جديد بعنوان فقط (الوصف يُضاف لاحقًا عبر batchUpdate)
-    """
     body = {"info": {"title": sanitize_text(title)}}
     logger.info("Creating form: %s", title)
     created = service.forms().create(body=body).execute()
-
-    # إضافة الوصف لاحقاً
     if description:
         try:
             service.forms().batchUpdate(
@@ -93,26 +114,19 @@ def create_form(service, title, description=None):
             logger.info("Description added successfully.")
         except Exception as e:
             logger.warning("Failed to add description: %s", e)
-
     return created
 
 
 def build_choice_question_item(title: str, choices: List[str], correct_answer: str = None, points: int = 0):
-    """إنشاء كائن يمثل سؤال اختيار من متعدد"""
     title = sanitize_text(title)
     sanitized_choices = [sanitize_text(c) for c in choices]
     choice_objects = [{"value": c} for c in sanitized_choices]
-
     question_obj = {
         "question": {
             "required": False,
-            "choiceQuestion": {
-                "type": "RADIO",
-                "options": choice_objects
-            }
+            "choiceQuestion": {"type": "RADIO", "options": choice_objects}
         }
     }
-
     if correct_answer:
         try:
             idx = sanitized_choices.index(sanitize_text(correct_answer))
@@ -122,20 +136,15 @@ def build_choice_question_item(title: str, choices: List[str], correct_answer: s
             }
         except ValueError:
             logger.warning("الإجابة '%s' غير موجودة ضمن الخيارات للسؤال '%s'", correct_answer, title)
-
     return {
         "createItem": {
-            "item": {
-                "title": title,
-                "questionItem": question_obj
-            },
+            "item": {"title": title, "questionItem": question_obj},
             "location": {"index": 0}
         }
     }
 
 
 def update_form_with_requests(service, form_id: str, requests: List[Dict[str, Any]]):
-    """إرسال التحديثات (مثل الأسئلة والإعدادات) إلى النموذج"""
     if not requests:
         return None
     try:
@@ -148,10 +157,8 @@ def update_form_with_requests(service, form_id: str, requests: List[Dict[str, An
 
 
 def parse_questions_from_text(content: str) -> List[Dict[str, Any]]:
-    """تحليل الأسئلة من نص"""
     blocks = re.split(r"\n\s*\n+", content.strip())
     questions = []
-
     for block in blocks:
         q = {"title": None, "choices": [], "correct": None, "points": 0}
         for line in block.splitlines():
@@ -172,7 +179,6 @@ def parse_questions_from_text(content: str) -> List[Dict[str, Any]]:
 
 
 def load_questions(path_or_text: str, from_file: bool = True) -> List[Dict[str, Any]]:
-    """تحميل الأسئلة من ملف أو نص مباشر"""
     if from_file:
         if not os.path.exists(path_or_text):
             raise FileNotFoundError(f"ملف الأسئلة غير موجود: {path_or_text}")
@@ -180,12 +186,10 @@ def load_questions(path_or_text: str, from_file: bool = True) -> List[Dict[str, 
             content = f.read()
     else:
         content = path_or_text
-
     return parse_questions_from_text(content)
 
 
 def ask_for_quiz_name() -> str:
-    """طلب اسم الكويز من المستخدم"""
     while True:
         title = input("🎯 أدخل اسم الكويز: ").strip()
         if title:
@@ -194,7 +198,6 @@ def ask_for_quiz_name() -> str:
 
 
 def main():
-    """البرنامج الرئيسي"""
     parser = argparse.ArgumentParser(description="إنشاء Google Form من ملف أو نص للأسئلة")
     parser.add_argument("--title", "-t", default="", help="عنوان النموذج")
     parser.add_argument("--description", "-d", default="", help="وصف النموذج")
@@ -202,7 +205,6 @@ def main():
     parser.add_argument("--text", "-x", default="", help="نص الأسئلة مباشرة")
     args = parser.parse_args()
 
-    # طلب اسم الكويز من المستخدم إذا لم يُدخل عنوانًا
     if not args.title:
         args.title = ask_for_quiz_name()
 
@@ -210,7 +212,6 @@ def main():
     form = create_form(service, args.title, args.description)
     form_id = form["formId"]
 
-    # إعداد النموذج كاختبار
     requests = [{
         "updateSettings": {
             "settings": {"quizSettings": {"isQuiz": True}},
@@ -218,7 +219,6 @@ def main():
         }
     }]
 
-    # تحميل الأسئلة (من ملف أو نص مباشر)
     if args.text:
         questions = load_questions(args.text, from_file=False)
     else:
@@ -231,7 +231,6 @@ def main():
 
     update_form_with_requests(service, form_id, requests)
 
-    # محاولة الحصول على رابط العرض (وليس التعديل)
     form_url = form.get("responderUri")
     if not form_url:
         form_url = f"https://docs.google.com/forms/d/e/{form_id}/viewform"
