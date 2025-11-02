@@ -1,102 +1,174 @@
-import os, json
+"""
+tg_google_forms_bot.py
+الإصدار النهائي بعد دمج كل التعديلات ✨
+----------------------------------------
+- يقبل الأسئلة من ملف txt أو نص مباشر.
+- يطلب من المستخدم إدخال اسم الكويز.
+- يعرض رابط viewform فقط.
+"""
 
-# حفظ بيانات Google من متغيرات البيئة (لأن Railway لا يحتفظ بملفات دائمة)
-creds_env = os.environ.get("CREDENTIALS_JSON")
-token_env = os.environ.get("TOKEN_JSON")
-
-if creds_env:
-    with open("credentials.json", "w", encoding="utf-8") as f:
-        f.write(creds_env)
-
-if token_env:
-    with open("token.json", "w", encoding="utf-8") as f:
-        f.write(token_env)
-
+import os
 import logging
-from functools import wraps
-from tempfile import NamedTemporaryFile
+import tempfile
+import subprocess
 from telegram import Update, BotCommand
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from google_forms_automator_fixed import (
-    get_forms_service,
-    create_form,
-    load_questions_from_txt,
-    update_form_with_requests,
-    build_choice_question_item
+
+# إعداد التسجيل (Logs)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-
-BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
-OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def owner_only(func):
-    @wraps(func)
-    def wrapped(update: Update, context: CallbackContext, *args, **kwargs):
-        if OWNER_ID and update.effective_user.id != OWNER_ID:
-            update.message.reply_text("❌ هذه الخاصية متاحة فقط لمالك البوت.")
-            return
-        return func(update, context, *args, **kwargs)
-    return wrapped
+# توكن البوت
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا"
+
+# مسار سكربت إنشاء النموذج
+SCRIPT_PATH = "google_forms_automator_fixed.py"
+
 
 def start(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "👋 مرحبًا!\n"
-        "أرسل لي ملف الأسئلة (.txt) بنفس تنسيق الملف في Google Forms Automator وسأنشئ لك النموذج.\n\n"
-        "/create - لإنشاء نموذج جديد\n"
-        "/help - للمساعدة"
+        "👋 أهلاً بك!\n"
+        "أرسل لي الآن ملف الأسئلة (.txt)\n"
+        "أو الصق الأسئلة مباشرة في الرسالة.\n\n"
+        "كل سؤال يجب أن يكون مثل المثال التالي:\n"
+        "سؤال: ما عاصمة مصر؟\n"
+        "اختيارات: القاهرة | باريس | لندن\n"
+        "إجابة: القاهرة\n"
+        "نقاط: 1\n"
     )
 
-def help_cmd(update: Update, context: CallbackContext):
-    update.message.reply_text("أرسل ملف نصي فيه الأسئلة بصيغة:\n"
-                              "سؤال: ...\nاختيارات: ... | ...\nإجابة: ...\nنقاط: ...")
 
-def create_handler(update: Update, context: CallbackContext):
-    msg = update.message
-    doc = msg.document
-    if doc and doc.mime_type.startswith("text/"):
-        file = doc.get_file()
-        with NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
-            file.download(custom_path=tmp.name)
-            questions_path = tmp.name
-    else:
-        update.message.reply_text("📎 أرسل ملف الأسئلة كـ .txt")
+def handle_message(update: Update, context: CallbackContext):
+    """يتعامل مع الرسائل النصية (أسئلة منسوخة)"""
+    text = update.message.text.strip()
+
+    if not text:
+        update.message.reply_text("⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
         return
 
-    progress = update.message.reply_text("⏳ جاري إنشاء النموذج...")
+    # طلب اسم الكويز
+    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
+    context.user_data["pending_questions"] = text
+    context.user_data["awaiting_quiz_name"] = True
+
+
+def handle_quiz_name(update: Update, context: CallbackContext):
+    """يحصل على اسم الكويز ويبدأ الإنشاء"""
+    quiz_name = update.message.text.strip()
+    text = context.user_data.get("pending_questions")
+
+    if not quiz_name:
+        update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا. حاول مرة أخرى:")
+        return
+
+    update.message.reply_text("⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
+
     try:
-        service = get_forms_service("credentials.json", "token.json")
-        form = create_form(service, "Telegram Quiz", "تم إنشاؤه عبر بوت التليجرام")
-        form_id = form["formId"]
-        questions = load_questions_from_txt(questions_path)
+        # حفظ الأسئلة في ملف مؤقت
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as temp:
+            temp.write(text)
+            temp_path = temp.name
 
-        requests = [{"updateSettings": {"settings": {"quizSettings": {"isQuiz": True}},
-                                        "updateMask": "quizSettings.isQuiz"}}]
-        for q in questions:
-            item = build_choice_question_item(q['title'], q['choices'], q['correct'], q['points'])
-            requests.append(item)
+        # استدعاء السكربت لإنشاء النموذج
+        result = subprocess.run(
+            ["python", SCRIPT_PATH, "--title", quiz_name, "--questions", temp_path],
+            capture_output=True, text=True
+        )
 
-        update_form_with_requests(service, form_id, requests)
-        link = f"https://docs.google.com/forms/d/{form_id}/edit"
-        progress.edit_text(f"✅ تم إنشاء النموذج!\n🔗 {link}")
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+
+        if result.returncode == 0:
+            update.message.reply_text("✅ تم إنشاء الكويز بنجاح!\n\n" + output)
+        else:
+            update.message.reply_text(f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
+
     except Exception as e:
-        logger.exception(e)
-        progress.edit_text(f"❌ حدث خطأ: {e}")
+        update.message.reply_text(f"⚠️ حدث خطأ غير متوقع: {e}")
+
+    finally:
+        context.user_data.clear()
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def handle_document(update: Update, context: CallbackContext):
+    """يتعامل مع الملفات المرسلة (txt)"""
+    file = update.message.document
+
+    if not file.file_name.endswith(".txt"):
+        update.message.reply_text("⚠️ من فضلك أرسل ملف .txt فقط.")
+        return
+
+    # طلب اسم الكويز
+    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
+    context.user_data["file_id"] = file.file_id
+    context.user_data["awaiting_quiz_name_file"] = True
+
+
+def handle_quiz_name_file(update: Update, context: CallbackContext):
+    """يستقبل اسم الكويز بعد إرسال ملف"""
+    quiz_name = update.message.text.strip()
+    file_id = context.user_data.get("file_id")
+
+    if not quiz_name:
+        update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا. حاول مرة أخرى:")
+        return
+
+    update.message.reply_text("⏳ جاري إنشاء النموذج من الملف...")
+
+    try:
+        # تنزيل الملف المؤقت
+        new_file = context.bot.get_file(file_id)
+        temp_path = os.path.join(tempfile.gettempdir(), "questions.txt")
+        new_file.download(temp_path)
+
+        # تشغيل السكربت
+        result = subprocess.run(
+            ["python", SCRIPT_PATH, "--title", quiz_name, "--questions", temp_path],
+            capture_output=True, text=True
+        )
+
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+
+        if result.returncode == 0:
+            update.message.reply_text("✅ تم إنشاء الكويز بنجاح!\n\n" + output)
+        else:
+            update.message.reply_text(f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
+
+    except Exception as e:
+        update.message.reply_text(f"⚠️ حدث خطأ غير متوقع: {e}")
+
+    finally:
+        context.user_data.clear()
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 
 def main():
-    if not BOT_TOKEN:
-        print("❌ ضع توكن البوت في متغير TG_BOT_TOKEN.")
-        return
-    updater = Updater(BOT_TOKEN, use_context=True)
+    updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
+
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help_cmd))
-    dp.add_handler(CommandHandler("create", create_handler))
-    dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), create_handler))
-    updater.bot.set_my_commands([BotCommand("start", "ابدأ"), BotCommand("create", "إنشاء نموذج"), BotCommand("help", "مساعدة")])
+
+    # استلام ملف txt
+    dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), handle_document))
+
+    # استقبال اسم الكويز بعد إرسال ملف
+    dp.add_handler(MessageHandler(
+        Filters.text & Filters.chat_type.private & (Filters.regex(r"^.+$")),
+        lambda u, c: handle_quiz_name_file(u, c) if c.user_data.get("awaiting_quiz_name_file")
+        else handle_quiz_name(u, c) if c.user_data.get("awaiting_quiz_name")
+        else handle_message(u, c)
+    ))
+
     updater.start_polling()
+    logger.info("Bot started successfully.")
     updater.idle()
+
 
 if __name__ == "__main__":
     main()
