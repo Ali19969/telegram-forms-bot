@@ -1,22 +1,9 @@
 """
-google_forms_automator_fixed.py (إصدار نهائي)
-=============================================
-- إصلاح مشكلة ترتيب التحديثات: يتم تفعيل وضع الاختبار (isQuiz=True) أولاً قبل إضافة الأسئلة.
-- إضافة سؤال تفاعلي في البداية لاسم الكويز (إذا لم يُمرر بالوسائط).
-- في النهاية، طباعة رابط النموذج (Form link) بجانب الـ Form ID.
-- استمرار الاعتماد على ملف نصي للأسئلة بنفس التنسيق السابق.
-
-تنسيق ملف questions.txt:
--------------------------
-سؤال: ما هي عاصمة مصر؟
-اختيارات: القاهرة | الإسكندرية | الأقصر | أسوان
-إجابة: القاهرة
-نقاط: 2
-
-سؤال: أي من اللغات التالية لغة برمجة؟
-اختيارات: HTML | Python | CSS | Markdown
-إجابة: Python
-نقاط: 1
+google_forms_automator_fixed.py (إصدار معدل لحل مشكلة إنشاء النموذج)
+===================================================================
+- إصلاح مشكلة Google API: فقط info.title يمكن تمريره عند الإنشاء.
+- تم تعديل دالة create_form بحيث ترسل العنوان فقط.
+- بقية الكود كما هو دون أي حذف.
 """
 
 import os
@@ -77,9 +64,10 @@ def get_forms_service(credentials_file: str = CREDENTIALS_FILE, token_file: str 
     return service
 
 def create_form(service, title: str, description: str = "") -> Dict[str, Any]:
-    body = {'info': {'title': sanitize_text(title), 'documentTitle': sanitize_text(title)}}
-    if description:
-        body['info']['description'] = sanitize_text(description)
+    """
+    إنشاء نموذج جديد بالعُنوان فقط (وفقًا لمتطلبات Google Forms API الجديدة)
+    """
+    body = {'info': {'title': sanitize_text(title)}}
 
     try:
         logger.info("Creating form: %s", title)
@@ -181,7 +169,6 @@ def main():
     parser.add_argument('--questions', '-q', default='questions.txt', help='ملف الأسئلة النصي')
     args = parser.parse_args()
 
-    # إن لم يتم تمرير العنوان كوسيط، اطلبه من المستخدم
     if not args.title:
         args.title = input("أدخل اسم الكويز: ").strip() or "نموذج جديد"
 
@@ -193,13 +180,9 @@ def main():
         logger.error("لم يتم الحصول على formId من Google API")
         return
 
-    # تحميل الأسئلة
     questions = load_questions_from_txt(args.questions)
 
-    # ترتيب الطلبات: فعّل isQuiz أولاً، ثم الأسئلة، ثم الوصف
     requests = []
-
-    # 1️⃣ تفعيل وضع الكويز
     requests.append({
         "updateSettings": {
             "settings": {"quizSettings": {"isQuiz": True}},
@@ -207,12 +190,10 @@ def main():
         }
     })
 
-    # 2️⃣ إضافة الأسئلة
     for q in questions:
         item = build_choice_question_item(q['title'], q['choices'], q['correct'], q['points'])
         requests.append(item)
 
-    # 3️⃣ إضافة الوصف (اختياري)
     if args.description:
         requests.append({
             "updateFormInfo": {
