@@ -1,9 +1,10 @@
 """
 google_forms_automator_fixed.py
-الإصدار النهائي (متوافق مع Google Forms API الحديثة)
-====================================================
-- حل نهائي لمشكلة: Only info.title can be set when creating a form.
-- إنشاء النموذج بالعنوان فقط، ثم إضافة الوصف والأسئلة لاحقًا عبر batchUpdate.
+الإصدار النهائي الكامل ✅
+----------------------------------------------
+- إنشاء Google Form بالعنوان فقط.
+- ثم إضافة الوصف والأسئلة عبر batchUpdate.
+- إصلاح دعم الاستدعاء من بوت التيليجرام (3 وسائط).
 """
 
 import os
@@ -19,7 +20,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# إعداد صلاحيات الوصول
+# إعداد الصلاحيات
 SCOPES = ["https://www.googleapis.com/auth/forms.body"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
@@ -32,15 +33,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# تنظيف النص من رموز غير مقبولة
 def sanitize_text(s: str) -> str:
+    """تنظيف النص من رموز غير صالحة"""
     if s is None:
         return ""
     return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", str(s))
 
 
-# إنشاء خدمة Google Forms
 def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
+    """تجهيز خدمة Google Forms"""
     creds = None
     if os.path.exists(token_file):
         try:
@@ -55,7 +56,7 @@ def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
             creds.refresh(Request())
         else:
             if not os.path.exists(credentials_file):
-                raise FileNotFoundError("credentials.json مفقود.")
+                raise FileNotFoundError("ملف credentials.json مفقود.")
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             creds = flow.run_local_server(port=0)
             with open(token_file, "w") as token:
@@ -64,40 +65,40 @@ def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
     return build("forms", "v1", credentials=creds)
 
 
-# إنشاء النموذج بالعنوان فقط
-def create_form(service, title: str) -> dict:
-    """إنشاء نموذج Google جديد بعنوان فقط (بدون وصف أو إعدادات إضافية)"""
+def create_form(service, title, description=None):
+    """
+    إنشاء نموذج جديد بعنوان فقط (الوصف يُضاف لاحقًا عبر batchUpdate)
+    يقبل 3 وسائط لتوافقه مع بوت التيليجرام.
+    """
     body = {"info": {"title": sanitize_text(title)}}
     logger.info("Creating form: %s", title)
-    return service.forms().create(body=body).execute()
+    created = service.forms().create(body=body).execute()
 
-
-# تحديث الوصف لاحقاً
-def update_form_description(service, form_id: str, description: str):
-    """إضافة الوصف بعد الإنشاء"""
-    if not description:
-        return
-    try:
-        service.forms().batchUpdate(
-            formId=form_id,
-            body={
-                "requests": [
-                    {
-                        "updateFormInfo": {
-                            "info": {"description": sanitize_text(description)},
-                            "updateMask": "description",
+    # إضافة الوصف لاحقاً
+    if description:
+        try:
+            service.forms().batchUpdate(
+                formId=created["formId"],
+                body={
+                    "requests": [
+                        {
+                            "updateFormInfo": {
+                                "info": {"description": sanitize_text(description)},
+                                "updateMask": "description",
+                            }
                         }
-                    }
-                ]
-            },
-        ).execute()
-        logger.info("Description added successfully.")
-    except Exception as e:
-        logger.warning("Failed to add description: %s", e)
+                    ]
+                },
+            ).execute()
+            logger.info("Description added successfully.")
+        except Exception as e:
+            logger.warning("Failed to add description: %s", e)
+
+    return created
 
 
-# إنشاء سؤال اختيار من متعدد
 def build_choice_question_item(title: str, choices: List[str], correct_answer: str = None, points: int = 0):
+    """إنشاء كائن يمثل سؤال اختيار من متعدد"""
     title = sanitize_text(title)
     sanitized_choices = [sanitize_text(c) for c in choices]
     choice_objects = [{"value": c} for c in sanitized_choices]
@@ -112,7 +113,6 @@ def build_choice_question_item(title: str, choices: List[str], correct_answer: s
         }
     }
 
-    # في حال تم تحديد الإجابة الصحيحة
     if correct_answer:
         try:
             idx = sanitized_choices.index(sanitize_text(correct_answer))
@@ -134,8 +134,8 @@ def build_choice_question_item(title: str, choices: List[str], correct_answer: s
     }
 
 
-# إرسال التحديثات للنموذج (إضافة الأسئلة)
 def update_form_with_requests(service, form_id: str, requests: List[Dict[str, Any]]):
+    """إرسال التحديثات (مثل الأسئلة والإعدادات) إلى النموذج"""
     if not requests:
         return None
     try:
@@ -147,8 +147,8 @@ def update_form_with_requests(service, form_id: str, requests: List[Dict[str, An
         raise
 
 
-# قراءة الأسئلة من ملف نصي
 def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
+    """تحميل الأسئلة من ملف نصي"""
     if not os.path.exists(path):
         raise FileNotFoundError(f"ملف الأسئلة غير موجود: {path}")
     with open(path, "r", encoding="utf-8") as f:
@@ -176,8 +176,8 @@ def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
     return questions
 
 
-# البرنامج الرئيسي
 def main():
+    """البرنامج الرئيسي"""
     parser = argparse.ArgumentParser(description="إنشاء Google Form من ملف نصي للأسئلة")
     parser.add_argument("--title", "-t", default="", help="عنوان النموذج")
     parser.add_argument("--description", "-d", default="", help="وصف النموذج")
@@ -188,14 +188,8 @@ def main():
         args.title = input("أدخل اسم الكويز: ").strip() or "نموذج جديد"
 
     service = get_forms_service()
-    form = create_form(service, args.title)
+    form = create_form(service, args.title, args.description)
     form_id = form["formId"]
-
-    # إضافة الوصف
-    update_form_description(service, form_id, args.description)
-
-    # تحميل الأسئلة
-    questions = load_questions_from_txt(args.questions)
 
     # إعداد النموذج كاختبار
     requests = [{
@@ -205,7 +199,8 @@ def main():
         }
     }]
 
-    # إضافة الأسئلة
+    # تحميل الأسئلة وإضافتها
+    questions = load_questions_from_txt(args.questions)
     for q in questions:
         item = build_choice_question_item(q["title"], q["choices"], q["correct"], q["points"])
         requests.append(item)
