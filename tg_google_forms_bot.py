@@ -35,8 +35,8 @@ def send_quiz_link(chat_id: int, context: CallbackContext, quiz_url: str):
     """إرسال رسالة نجاح تحتوي على رابط الكويز + زر فتح + زر إنشاء كويز جديد"""
     text = (
         "✅ *تم إنشاء الكويز بنجاح!*\n\n"
-        f"رابط الكويز: `{quiz_url}`\n\n"
-        "اضغط على الزر أدناه لفتح الكويز أو انسخ الرابط أعلاه.\n\n"
+        f"🔗 رابط الكويز: `{quiz_url}`\n\n"
+        "اضغط على الزر أدناه لفتحه مباشرة أو انسخ الرابط أعلاه.\n\n"
         "🖊️ تم التطوير بواسطة: ADEl EL-GAWAD"
     )
     
@@ -170,7 +170,7 @@ def start_quiz_creation(update: Update, context: CallbackContext):
 
         if result.returncode == 0:
             # نفترض أن آخر سطر من stdout هو رابط الكويز
-            quiz_url = output.splitlines()[-1]
+            quiz_url = output.splitlines()[-1].strip()
             send_quiz_link(chat_id, context, quiz_url)
         else:
             send_message(chat_id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
