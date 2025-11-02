@@ -2,13 +2,14 @@ import os
 import logging
 import tempfile
 import subprocess
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater,
     CommandHandler,
     MessageHandler,
     Filters,
     CallbackContext,
+    CallbackQueryHandler,
 )
 
 # إعداد التسجيل
@@ -21,10 +22,12 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا
 SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 
-# --------------------------- دالة إرسال رسالة ---------------------------
+# --------------------------- دالة إرسال رسالة مع زر إنشاء كويز ---------------------------
 def send_message(chat_id: int, context: CallbackContext, text: str):
-    """إرسال رسالة نصية عادية"""
-    context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+    """إرسال أي رسالة مع زر إنشاء كويز جديد"""
+    keyboard = [[InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 # --------------------------- رسالة /help ---------------------------
@@ -37,6 +40,7 @@ def send_help_text(chat_id: int, context: CallbackContext):
         "   اختيارات: القاهرة | باريس | لندن\n"
         "   إجابة: القاهرة\n"
         "   نقاط: 1\n\n"
+        "💡 اضغط على الزر 🪄 لإنشاء كويز جديد في أي وقت.\n\n"
         "🖊️ تم التطوير بواسطة: ADEl EL-GAWAD"
     )
     send_message(chat_id, context, help_text)
@@ -46,14 +50,7 @@ def send_help_text(chat_id: int, context: CallbackContext):
 def start(update: Update, context: CallbackContext):
     context.user_data.clear()
     chat_id = update.effective_chat.id
-    send_message(chat_id, context,
-                 "👋 أهلاً بك!\nأرسل لي الآن ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة.\n\n"
-                 "كل سؤال يجب أن يكون بالشكل التالي:\n"
-                 "سؤال: ما عاصمة مصر؟\n"
-                 "اختيارات: القاهرة | باريس | لندن\n"
-                 "إجابة: القاهرة\n"
-                 "نقاط: 1\n\n"
-                 "🖊️ تم التطوير بواسطة: ADEl EL-GAWAD")
+    send_help_text(chat_id, context)
     context.user_data["step"] = "awaiting_questions"
 
 
@@ -69,11 +66,21 @@ def create_command(update: Update, context: CallbackContext):
     context.user_data["step"] = "awaiting_questions"
 
 
+def button_handler(update: Update, context: CallbackContext):
+    """زر إنشاء كويز جديد"""
+    query = update.callback_query
+    query.answer()
+    context.user_data.clear()
+    chat_id = query.message.chat.id
+    send_message(chat_id, context, "🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
+    context.user_data["step"] = "awaiting_questions"
+
+
 # --------------------------- استقبال الملفات والنصوص ---------------------------
 def handle_document(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     if context.user_data.get("step") != "awaiting_questions":
-        send_message(chat_id, context, "⚠️ الرجاء البدء أولاً بإرسال /start أو /create.")
+        send_message(chat_id, context, "⚠️ الرجاء الضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
         return
 
     file = update.message.document
@@ -110,7 +117,7 @@ def handle_text(update: Update, context: CallbackContext):
         return
 
     else:
-        send_message(chat_id, context, "⚠️ الرجاء البدء أولاً بإرسال /start أو /create.")
+        send_message(chat_id, context, "⚠️ الرجاء الضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
 
 
 # --------------------------- إنشاء الكويز ---------------------------
@@ -168,6 +175,7 @@ def main():
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_command))
     dp.add_handler(CommandHandler("create", create_command))
+    dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), handle_document))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
 
