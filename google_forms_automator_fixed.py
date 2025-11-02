@@ -1,10 +1,11 @@
 """
 google_forms_automator_fixed.py
-الإصدار النهائي الكامل ✅
+الإصدار النهائي المطور ✨
 ----------------------------------------------
-- إنشاء Google Form بالعنوان فقط.
-- ثم إضافة الوصف والأسئلة عبر batchUpdate.
-- إصلاح دعم الاستدعاء من بوت التيليجرام (3 وسائط).
+✅ إنشاء Google Form بالعنوان فقط.
+✅ إرسال رابط العرض (viewform) وليس رابط التعديل.
+✅ يقبل الأسئلة من ملف .txt أو من نص مباشر.
+✅ يطلب من المستخدم إدخال اسم الكويز قبل الإنشاء.
 """
 
 import os
@@ -68,7 +69,6 @@ def get_forms_service(credentials_file=CREDENTIALS_FILE, token_file=TOKEN_FILE):
 def create_form(service, title, description=None):
     """
     إنشاء نموذج جديد بعنوان فقط (الوصف يُضاف لاحقًا عبر batchUpdate)
-    يقبل 3 وسائط لتوافقه مع بوت التيليجرام.
     """
     body = {"info": {"title": sanitize_text(title)}}
     logger.info("Creating form: %s", title)
@@ -147,14 +147,9 @@ def update_form_with_requests(service, form_id: str, requests: List[Dict[str, An
         raise
 
 
-def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
-    """تحميل الأسئلة من ملف نصي"""
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"ملف الأسئلة غير موجود: {path}")
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read().strip()
-
-    blocks = re.split(r"\n\s*\n+", content)
+def parse_questions_from_text(content: str) -> List[Dict[str, Any]]:
+    """تحليل الأسئلة من نص"""
+    blocks = re.split(r"\n\s*\n+", content.strip())
     questions = []
 
     for block in blocks:
@@ -176,16 +171,40 @@ def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
     return questions
 
 
+def load_questions(path_or_text: str, from_file: bool = True) -> List[Dict[str, Any]]:
+    """تحميل الأسئلة من ملف أو نص مباشر"""
+    if from_file:
+        if not os.path.exists(path_or_text):
+            raise FileNotFoundError(f"ملف الأسئلة غير موجود: {path_or_text}")
+        with open(path_or_text, "r", encoding="utf-8") as f:
+            content = f.read()
+    else:
+        content = path_or_text
+
+    return parse_questions_from_text(content)
+
+
+def ask_for_quiz_name() -> str:
+    """طلب اسم الكويز من المستخدم"""
+    while True:
+        title = input("🎯 أدخل اسم الكويز: ").strip()
+        if title:
+            return title
+        print("⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى.")
+
+
 def main():
     """البرنامج الرئيسي"""
-    parser = argparse.ArgumentParser(description="إنشاء Google Form من ملف نصي للأسئلة")
+    parser = argparse.ArgumentParser(description="إنشاء Google Form من ملف أو نص للأسئلة")
     parser.add_argument("--title", "-t", default="", help="عنوان النموذج")
     parser.add_argument("--description", "-d", default="", help="وصف النموذج")
-    parser.add_argument("--questions", "-q", default="questions.txt", help="ملف الأسئلة")
+    parser.add_argument("--questions", "-q", default="", help="ملف الأسئلة (txt)")
+    parser.add_argument("--text", "-x", default="", help="نص الأسئلة مباشرة")
     args = parser.parse_args()
 
+    # طلب اسم الكويز من المستخدم إذا لم يُدخل عنوانًا
     if not args.title:
-        args.title = input("أدخل اسم الكويز: ").strip() or "نموذج جديد"
+        args.title = ask_for_quiz_name()
 
     service = get_forms_service()
     form = create_form(service, args.title, args.description)
@@ -199,18 +218,27 @@ def main():
         }
     }]
 
-    # تحميل الأسئلة وإضافتها
-    questions = load_questions_from_txt(args.questions)
+    # تحميل الأسئلة (من ملف أو نص مباشر)
+    if args.text:
+        questions = load_questions(args.text, from_file=False)
+    else:
+        qfile = args.questions or "questions.txt"
+        questions = load_questions(qfile, from_file=True)
+
     for q in questions:
         item = build_choice_question_item(q["title"], q["choices"], q["correct"], q["points"])
         requests.append(item)
 
     update_form_with_requests(service, form_id, requests)
 
-    form_url = f"https://docs.google.com/forms/d/{form_id}/edit"
+    # محاولة الحصول على رابط العرض (وليس التعديل)
+    form_url = form.get("responderUri")
+    if not form_url:
+        form_url = f"https://docs.google.com/forms/d/e/{form_id}/viewform"
+
     print("\n✅ تم إنشاء النموذج بنجاح!")
-    print("📄 العنوان:", args.title)
-    print("🔗 الرابط:", form_url)
+    print("📄 اسم الكويز:", args.title)
+    print("🔗 رابط العرض:", form_url)
 
 
 if __name__ == "__main__":
