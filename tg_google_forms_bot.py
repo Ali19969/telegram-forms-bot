@@ -1,18 +1,16 @@
-"""
-tg_google_forms_bot.py
-الإصدار النهائي بعد دمج كل التعديلات ✨
-----------------------------------------
-- يقبل الأسئلة من ملف txt أو نص مباشر.
-- يطلب من المستخدم إدخال اسم الكويز.
-- يعرض رابط viewform فقط.
-"""
-
 import os
 import logging
 import tempfile
 import subprocess
-from telegram import Update, BotCommand
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackContext,
+    CallbackQueryHandler,
+)
 
 # إعداد التسجيل (Logs)
 logging.basicConfig(
@@ -20,15 +18,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# توكن البوت
+# التوكن
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا"
 
-# مسار سكربت إنشاء النموذج
+# مسار السكربت الأساسي
 SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
+# --------------------------- رسائل مساعدة ---------------------------
+def send_welcome_message(update_or_context, context: CallbackContext = None):
+    """إرسال رسالة الترحيب مع زر إنشاء كويز جديد"""
+    welcome_message = (
         "👋 أهلاً بك!\n"
         "أرسل لي الآن ملف الأسئلة (.txt)\n"
         "أو الصق الأسئلة مباشرة في الرسالة.\n\n"
@@ -36,96 +36,108 @@ def start(update: Update, context: CallbackContext):
         "سؤال: ما عاصمة مصر؟\n"
         "اختيارات: القاهرة | باريس | لندن\n"
         "إجابة: القاهرة\n"
-        "نقاط: 1\n"
+        "نقاط: 1"
     )
 
+    keyboard = [
+        [InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-def handle_message(update: Update, context: CallbackContext):
-    """يتعامل مع الرسائل النصية (أسئلة منسوخة)"""
-    text = update.message.text.strip()
-
-    if not text:
-        update.message.reply_text("⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
-        return
-
-    # طلب اسم الكويز
-    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
-    context.user_data["pending_questions"] = text
-    context.user_data["awaiting_quiz_name"] = True
+    if isinstance(update_or_context, Update):
+        # من /start
+        update_or_context.message.reply_text(welcome_message, reply_markup=reply_markup)
+    else:
+        # من callback بعد إنهاء كويز
+        update_or_context.bot.send_message(chat_id=update_or_context, text=welcome_message, reply_markup=reply_markup)
 
 
-def handle_quiz_name(update: Update, context: CallbackContext):
-    """يحصل على اسم الكويز ويبدأ الإنشاء"""
-    quiz_name = update.message.text.strip()
-    text = context.user_data.get("pending_questions")
+# --------------------------- المرحلة 1: الترحيب ---------------------------
+def start(update: Update, context: CallbackContext):
+    """رسالة الترحيب عند /start"""
+    context.user_data.clear()
+    send_welcome_message(update, context)
+    context.user_data["step"] = "awaiting_questions"
 
-    if not quiz_name:
-        update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا. حاول مرة أخرى:")
-        return
 
-    update.message.reply_text("⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
+def button_handler(update: Update, context: CallbackContext):
+    """معالجة الضغط على زر Inline"""
+    query = update.callback_query
+    query.answer()
 
-    try:
-        # حفظ الأسئلة في ملف مؤقت
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as temp:
-            temp.write(text)
-            temp_path = temp.name
-
-        # استدعاء السكربت لإنشاء النموذج
-        result = subprocess.run(
-            ["python", SCRIPT_PATH, "--title", quiz_name, "--questions", temp_path],
-            capture_output=True, text=True
-        )
-
-        output = result.stdout.strip()
-        error = result.stderr.strip()
-
-        if result.returncode == 0:
-            update.message.reply_text("✅ تم إنشاء الكويز بنجاح!\n\n" + output)
-        else:
-            update.message.reply_text(f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
-
-    except Exception as e:
-        update.message.reply_text(f"⚠️ حدث خطأ غير متوقع: {e}")
-
-    finally:
+    if query.data == "create_quiz":
         context.user_data.clear()
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        query.message.reply_text("🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
+        context.user_data["step"] = "awaiting_questions"
 
 
+# --------------------------- المرحلة 2: استلام الأسئلة ---------------------------
 def handle_document(update: Update, context: CallbackContext):
-    """يتعامل مع الملفات المرسلة (txt)"""
-    file = update.message.document
+    """عند إرسال ملف .txt"""
+    if context.user_data.get("step") != "awaiting_questions":
+        update.message.reply_text("⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+        return
 
+    file = update.message.document
     if not file.file_name.endswith(".txt"):
         update.message.reply_text("⚠️ من فضلك أرسل ملف .txt فقط.")
         return
 
-    # طلب اسم الكويز
-    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
     context.user_data["file_id"] = file.file_id
-    context.user_data["awaiting_quiz_name_file"] = True
+    context.user_data["step"] = "awaiting_quiz_name"
+    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
 
 
-def handle_quiz_name_file(update: Update, context: CallbackContext):
-    """يستقبل اسم الكويز بعد إرسال ملف"""
-    quiz_name = update.message.text.strip()
-    file_id = context.user_data.get("file_id")
+def handle_text(update: Update, context: CallbackContext):
+    """عند إرسال الأسئلة نصياً أو إدخال اسم الكويز"""
+    step = context.user_data.get("step")
 
-    if not quiz_name:
-        update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا. حاول مرة أخرى:")
+    if step == "awaiting_questions":
+        text = update.message.text.strip()
+        if not text:
+            update.message.reply_text("⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
+            return
+        context.user_data["questions_text"] = text
+        context.user_data["step"] = "awaiting_quiz_name"
+        update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
         return
 
-    update.message.reply_text("⏳ جاري إنشاء النموذج من الملف...")
+    elif step == "awaiting_quiz_name":
+        quiz_name = update.message.text.strip()
+        if not quiz_name:
+            update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى:")
+            return
+        context.user_data["quiz_name"] = quiz_name
+        start_quiz_creation(update, context)
+        return
 
+    else:
+        update.message.reply_text("⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+
+
+# --------------------------- المرحلة 3: الإنشاء ---------------------------
+def start_quiz_creation(update: Update, context: CallbackContext):
+    """إنشاء النموذج"""
+    quiz_name = context.user_data.get("quiz_name")
+    text = context.user_data.get("questions_text")
+    file_id = context.user_data.get("file_id")
+
+    update.message.reply_text("⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
+
+    temp_path = None
     try:
-        # تنزيل الملف المؤقت
-        new_file = context.bot.get_file(file_id)
-        temp_path = os.path.join(tempfile.gettempdir(), "questions.txt")
-        new_file.download(temp_path)
+        if text:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as temp:
+                temp.write(text)
+                temp_path = temp.name
+        elif file_id:
+            file = context.bot.get_file(file_id)
+            temp_path = os.path.join(tempfile.gettempdir(), "questions.txt")
+            file.download(temp_path)
+        else:
+            update.message.reply_text("⚠️ لم يتم العثور على الأسئلة.")
+            return
 
-        # تشغيل السكربت
         result = subprocess.run(
             ["python", SCRIPT_PATH, "--title", quiz_name, "--questions", temp_path],
             capture_output=True, text=True
@@ -144,29 +156,30 @@ def handle_quiz_name_file(update: Update, context: CallbackContext):
 
     finally:
         context.user_data.clear()
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
+        # بعد كل كويز، أرسل رسالة الترحيب مرة أخرى مع الزر
+        send_welcome_message(update.message.chat_id, context)
 
+
+# --------------------------- المرحلة 4: التشغيل ---------------------------
 def main():
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
+    # الأوامر
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
 
-    # استلام ملف txt
+    # استقبال ملف txt
     dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), handle_document))
 
-    # استقبال اسم الكويز بعد إرسال ملف
-    dp.add_handler(MessageHandler(
-        Filters.text & Filters.chat_type.private & (Filters.regex(r"^.+$")),
-        lambda u, c: handle_quiz_name_file(u, c) if c.user_data.get("awaiting_quiz_name_file")
-        else handle_quiz_name(u, c) if c.user_data.get("awaiting_quiz_name")
-        else handle_message(u, c)
-    ))
+    # استقبال الرسائل النصية
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
 
     updater.start_polling()
-    logger.info("Bot started successfully.")
+    logger.info("✅ Bot started and waiting for messages.")
     updater.idle()
 
 
