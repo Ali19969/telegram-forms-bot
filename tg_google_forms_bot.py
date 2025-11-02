@@ -30,32 +30,43 @@ def send_message(chat_id: int, context: CallbackContext, text: str):
     context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
-def send_welcome(chat_id: int, context: CallbackContext):
-    """رسالة الترحيب"""
-    welcome_text = (
-        "👋 أهلاً بك!\n"
-        "أرسل لي الآن ملف الأسئلة (.txt)\n"
-        "أو الصق الأسئلة مباشرة في الرسالة.\n\n"
-        "كل سؤال يجب أن يكون مثل المثال التالي:\n"
-        "سؤال: ما عاصمة مصر؟\n"
-        "اختيارات: القاهرة | باريس | لندن\n"
-        "إجابة: القاهرة\n"
-        "نقاط: 1"
+# --------------------------- رسالة /help ---------------------------
+def send_help_text(chat_id: int, context: CallbackContext):
+    help_text = (
+        "ℹ️ **تعليمات البوت لإرسال الأسئلة**:\n\n"
+        "1️⃣ أرسل لي **ملف الأسئلة بصيغة .txt** أو الصق الأسئلة مباشرة.\n"
+        "2️⃣ كل سؤال يجب أن يكون بالشكل التالي:\n"
+        "   سؤال: ما عاصمة مصر؟\n"
+        "   اختيارات: القاهرة | باريس | لندن\n"
+        "   إجابة: القاهرة\n"
+        "   نقاط: 1\n\n"
+        "💡 يمكنك الضغط على الزر 🪄 لإنشاء كويز جديد في أي وقت.\n\n"
+        "🖊️ **تم التطوير بواسطة: ADEl EL-GAWAD**"
     )
-    send_message(chat_id, context, welcome_text)
+    send_message(chat_id, context, help_text)
 
 
 # --------------------------- الأوامر ---------------------------
 def start(update: Update, context: CallbackContext):
-    """رسالة /start"""
     context.user_data.clear()
     chat_id = update.effective_chat.id
-    send_welcome(chat_id, context)
+    send_help_text(chat_id, context)
+    context.user_data["step"] = "awaiting_questions"
+
+
+def help_command(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    send_help_text(chat_id, context)
+
+
+def create_command(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    context.user_data.clear()
+    send_message(chat_id, context, "🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
     context.user_data["step"] = "awaiting_questions"
 
 
 def button_handler(update: Update, context: CallbackContext):
-    """تعامل مع الضغط على زر Inline"""
     query = update.callback_query
     query.answer()
     context.user_data.clear()
@@ -140,7 +151,8 @@ def start_quiz_creation(update: Update, context: CallbackContext):
         error = result.stderr.strip()
 
         if result.returncode == 0:
-            send_message(chat_id, context, "✅ تم إنشاء الكويز بنجاح!\n\n" + output)
+            send_message(chat_id, context,
+                         f"✅ تم إنشاء الكويز بنجاح!\n\n{output}\n\n🖊️ تم التطوير بواسطة: ADEl EL-GAWAD")
         else:
             send_message(chat_id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
 
@@ -153,12 +165,14 @@ def start_quiz_creation(update: Update, context: CallbackContext):
             os.remove(temp_path)
 
 
-# --------------------------- تشغيل البوت ---------------------------
+# --------------------------- التشغيل ---------------------------
 def main():
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("help", help_command))
+    dp.add_handler(CommandHandler("create", create_command))
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.document.mime_type("text/plain"), handle_document))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
