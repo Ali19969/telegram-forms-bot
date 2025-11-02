@@ -1,5 +1,14 @@
+# نستخدم Python 3.11 لتفادي مشكلة imghdr
 FROM python:3.11-slim
+
+# نثبت pip وننشئ مجلد العمل
+RUN apt-get update && apt-get install -y python3-pip
+
 WORKDIR /app
 COPY . .
+
+# نثبت المتطلبات
 RUN pip install --no-cache-dir -r requirements.txt
+
+# نشغّل البوت
 CMD ["python", "tg_google_forms_bot.py"]
