@@ -22,18 +22,36 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا
 SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 
-# --------------------------- دالة إرسال الرسائل مع الزر ---------------------------
+# --------------------------- دالة إرسال رسالة مع زر إنشاء كويز ---------------------------
 def send_message(chat_id: int, context: CallbackContext, text: str):
     """إرسال أي رسالة مع زر إنشاء كويز جديد دائمًا"""
     keyboard = [[InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode="Markdown")
+
+
+# --------------------------- دالة إرسال رابط الكويز ---------------------------
+def send_quiz_link(chat_id: int, context: CallbackContext, quiz_url: str):
+    """إرسال رسالة نجاح تحتوي على رابط الكويز + زر فتح + زر إنشاء كويز جديد"""
+    text = (
+        "✅ *تم إنشاء الكويز بنجاح!*\n\n"
+        f"رابط الكويز: `{quiz_url}`\n\n"
+        "اضغط على الزر أدناه لفتح الكويز أو انسخ الرابط أعلاه.\n\n"
+        "🖊️ تم التطوير بواسطة: ADEl EL-GAWAD"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("فتح الكويز 🎯", url=quiz_url)],
+        [InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
 
 # --------------------------- رسالة /help ---------------------------
 def send_help_text(chat_id: int, context: CallbackContext):
     help_text = (
-        "ℹ️ **تعليمات البوت لإرسال الأسئلة**:\n\n"
+        "*ℹ️ تعليمات البوت لإرسال الأسئلة:*\n\n"
         "1️⃣ أرسل لي **ملف الأسئلة بصيغة .txt** أو الصق الأسئلة مباشرة.\n"
         "2️⃣ كل سؤال يجب أن يكون بالشكل التالي:\n"
         "   سؤال: ما عاصمة مصر؟\n"
@@ -41,7 +59,7 @@ def send_help_text(chat_id: int, context: CallbackContext):
         "   إجابة: القاهرة\n"
         "   نقاط: 1\n\n"
         "💡 يمكنك الضغط على الزر 🪄 لإنشاء كويز جديد في أي وقت.\n\n"
-        "🖊️ **تم التطوير بواسطة: ADEl EL-GAWAD**"
+        "🖊️ تم التطوير بواسطة: ADEl EL-GAWAD"
     )
     send_message(chat_id, context, help_text)
 
@@ -151,8 +169,9 @@ def start_quiz_creation(update: Update, context: CallbackContext):
         error = result.stderr.strip()
 
         if result.returncode == 0:
-            send_message(chat_id, context,
-                         f"✅ تم إنشاء الكويز بنجاح!\n\n{output}\n\n🖊️ تم التطوير بواسطة: ADEl EL-GAWAD")
+            # نفترض أن آخر سطر من stdout هو رابط الكويز
+            quiz_url = output.splitlines()[-1]
+            send_quiz_link(chat_id, context, quiz_url)
         else:
             send_message(chat_id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
 
@@ -165,7 +184,7 @@ def start_quiz_creation(update: Update, context: CallbackContext):
             os.remove(temp_path)
 
 
-# --------------------------- التشغيل ---------------------------
+# --------------------------- تشغيل البوت ---------------------------
 def main():
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
