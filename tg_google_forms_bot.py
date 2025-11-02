@@ -24,17 +24,17 @@ SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 # --------------------------- دالة إرسال رسالة مع زر إنشاء كويز ---------------------------
 def send_message(chat_id: int, context: CallbackContext, text: str):
-    """إرسال أي رسالة مع زر إنشاء كويز جديد"""
+    """إرسال أي رسالة مع زر إنشاء كويز جديد بدون Markdown لتجنب الأخطاء"""
     keyboard = [[InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode="Markdown")
+    context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
 
 
 # --------------------------- رسالة /help ---------------------------
 def send_help_text(chat_id: int, context: CallbackContext):
     help_text = (
-        "*ℹ️ تعليمات البوت لإرسال الأسئلة:*\n\n"
-        "1️⃣ أرسل لي **ملف الأسئلة بصيغة .txt** أو الصق الأسئلة مباشرة.\n"
+        "ℹ️ تعليمات البوت لإرسال الأسئلة:\n\n"
+        "1️⃣ أرسل لي ملف الأسئلة بصيغة .txt أو الصق الأسئلة مباشرة.\n"
         "2️⃣ كل سؤال يجب أن يكون بالشكل التالي:\n"
         "   سؤال: ما عاصمة مصر؟\n"
         "   اختيارات: القاهرة | باريس | لندن\n"
