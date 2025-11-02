@@ -25,9 +25,23 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "ضع_توكن_البوت_هنا
 SCRIPT_PATH = "google_forms_automator_fixed.py"
 
 
-# --------------------------- رسائل مساعدة ---------------------------
+# --------------------------- الدالة الموحدة لإرسال الرسائل ---------------------------
+def send_message(update_or_context, context: CallbackContext, text: str):
+    """
+    إرسال أي رسالة مع زر إنشاء كويز جديد دائمًا.
+    يمكن استخدامه للنجاح، الخطأ، التحذيرات، التعليمات.
+    """
+    keyboard = [[InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if isinstance(update_or_context, Update):
+        update_or_context.message.reply_text(text, reply_markup=reply_markup)
+    else:
+        context.bot.send_message(chat_id=update_or_context, text=text, reply_markup=reply_markup)
+
+
 def send_welcome_message(update_or_context, context: CallbackContext = None):
-    """إرسال رسالة الترحيب مع زر إنشاء كويز جديد"""
+    """رسالة الترحيب"""
     welcome_message = (
         "👋 أهلاً بك!\n"
         "أرسل لي الآن ملف الأسئلة (.txt)\n"
@@ -38,18 +52,7 @@ def send_welcome_message(update_or_context, context: CallbackContext = None):
         "إجابة: القاهرة\n"
         "نقاط: 1"
     )
-
-    keyboard = [
-        [InlineKeyboardButton("🪄 إنشاء كويز جديد", callback_data="create_quiz")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    if isinstance(update_or_context, Update):
-        # من /start
-        update_or_context.message.reply_text(welcome_message, reply_markup=reply_markup)
-    else:
-        # من callback بعد إنهاء كويز
-        update_or_context.bot.send_message(chat_id=update_or_context, text=welcome_message, reply_markup=reply_markup)
+    send_message(update_or_context, context, welcome_message)
 
 
 # --------------------------- المرحلة 1: الترحيب ---------------------------
@@ -67,7 +70,7 @@ def button_handler(update: Update, context: CallbackContext):
 
     if query.data == "create_quiz":
         context.user_data.clear()
-        query.message.reply_text("🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
+        send_message(query, context, "🎯 من فضلك أرسل ملف الأسئلة (.txt) أو الصق الأسئلة مباشرة:")
         context.user_data["step"] = "awaiting_questions"
 
 
@@ -75,17 +78,17 @@ def button_handler(update: Update, context: CallbackContext):
 def handle_document(update: Update, context: CallbackContext):
     """عند إرسال ملف .txt"""
     if context.user_data.get("step") != "awaiting_questions":
-        update.message.reply_text("⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+        send_message(update, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
         return
 
     file = update.message.document
     if not file.file_name.endswith(".txt"):
-        update.message.reply_text("⚠️ من فضلك أرسل ملف .txt فقط.")
+        send_message(update, context, "⚠️ من فضلك أرسل ملف .txt فقط.")
         return
 
     context.user_data["file_id"] = file.file_id
     context.user_data["step"] = "awaiting_quiz_name"
-    update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
+    send_message(update, context, "🎯 من فضلك أدخل اسم الكويز:")
 
 
 def handle_text(update: Update, context: CallbackContext):
@@ -95,24 +98,24 @@ def handle_text(update: Update, context: CallbackContext):
     if step == "awaiting_questions":
         text = update.message.text.strip()
         if not text:
-            update.message.reply_text("⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
+            send_message(update, context, "⚠️ الرجاء إرسال نص الأسئلة أو ملف .txt.")
             return
         context.user_data["questions_text"] = text
         context.user_data["step"] = "awaiting_quiz_name"
-        update.message.reply_text("🎯 من فضلك أدخل اسم الكويز:")
+        send_message(update, context, "🎯 من فضلك أدخل اسم الكويز:")
         return
 
     elif step == "awaiting_quiz_name":
         quiz_name = update.message.text.strip()
         if not quiz_name:
-            update.message.reply_text("⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى:")
+            send_message(update, context, "⚠️ لا يمكن ترك الاسم فارغًا، حاول مرة أخرى:")
             return
         context.user_data["quiz_name"] = quiz_name
         start_quiz_creation(update, context)
         return
 
     else:
-        update.message.reply_text("⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
+        send_message(update, context, "⚠️ اضغط على زر 🪄 لإنشاء كويز جديد أولاً.")
 
 
 # --------------------------- المرحلة 3: الإنشاء ---------------------------
@@ -122,7 +125,7 @@ def start_quiz_creation(update: Update, context: CallbackContext):
     text = context.user_data.get("questions_text")
     file_id = context.user_data.get("file_id")
 
-    update.message.reply_text("⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
+    send_message(update, context, "⏳ جاري إنشاء النموذج، يرجى الانتظار قليلاً...")
 
     temp_path = None
     try:
@@ -135,7 +138,7 @@ def start_quiz_creation(update: Update, context: CallbackContext):
             temp_path = os.path.join(tempfile.gettempdir(), "questions.txt")
             file.download(temp_path)
         else:
-            update.message.reply_text("⚠️ لم يتم العثور على الأسئلة.")
+            send_message(update, context, "⚠️ لم يتم العثور على الأسئلة.")
             return
 
         result = subprocess.run(
@@ -147,20 +150,17 @@ def start_quiz_creation(update: Update, context: CallbackContext):
         error = result.stderr.strip()
 
         if result.returncode == 0:
-            update.message.reply_text("✅ تم إنشاء الكويز بنجاح!\n\n" + output)
+            send_message(update.message.chat_id, context, "✅ تم إنشاء الكويز بنجاح!\n\n" + output)
         else:
-            update.message.reply_text(f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
+            send_message(update.message.chat_id, context, f"❌ حدث خطأ أثناء الإنشاء:\n{error or output}")
 
     except Exception as e:
-        update.message.reply_text(f"⚠️ حدث خطأ غير متوقع: {e}")
+        send_message(update.message.chat_id, context, f"⚠️ حدث خطأ غير متوقع: {e}")
 
     finally:
         context.user_data.clear()
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
-
-        # بعد كل كويز، أرسل رسالة الترحيب مرة أخرى مع الزر
-        send_welcome_message(update.message.chat_id, context)
 
 
 # --------------------------- المرحلة 4: التشغيل ---------------------------
