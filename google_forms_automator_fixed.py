@@ -1,9 +1,10 @@
 """
-google_forms_automator_fixed.py (إصدار معدل لحل مشكلة إنشاء النموذج)
-===================================================================
-- إصلاح مشكلة Google API: فقط info.title يمكن تمريره عند الإنشاء.
-- تم تعديل دالة create_form بحيث ترسل العنوان فقط.
-- بقية الكود كما هو دون أي حذف.
+google_forms_automator_fixed.py (نسخة محدثة)
+=====================================================
+- تم إصلاح مشكلة:
+  "Only info.title can be set when creating a form..."
+- الآن يتم إنشاء النموذج بالعنوان فقط، ثم يُضاف الوصف لاحقًا عبر batchUpdate.
+- جميع بقية الدوال كما هي دون حذف أي شيء.
 """
 
 import os
@@ -29,10 +30,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def sanitize_text(s: str) -> str:
     if s is None:
         return ""
     return re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]", "", str(s))
+
 
 def get_forms_service(credentials_file: str = CREDENTIALS_FILE, token_file: str = TOKEN_FILE):
     creds = None
@@ -63,19 +66,44 @@ def get_forms_service(credentials_file: str = CREDENTIALS_FILE, token_file: str 
     service = build('forms', 'v1', credentials=creds)
     return service
 
+
 def create_form(service, title: str, description: str = "") -> Dict[str, Any]:
     """
-    إنشاء نموذج جديد بالعُنوان فقط (وفقًا لمتطلبات Google Forms API الجديدة)
+    إنشاء نموذج جديد بالعُنوان فقط، ثم إضافة الوصف لاحقًا عبر batchUpdate.
     """
-    body = {'info': {'title': sanitize_text(title)}}
+    body = {"info": {"title": sanitize_text(title)}}
 
     try:
         logger.info("Creating form: %s", title)
         created = service.forms().create(body=body).execute()
+        form_id = created.get("formId")
+
+        # إضافة الوصف لاحقاً إن وُجد
+        if description and form_id:
+            try:
+                service.forms().batchUpdate(
+                    formId=form_id,
+                    body={
+                        "requests": [
+                            {
+                                "updateFormInfo": {
+                                    "info": {"description": sanitize_text(description)},
+                                    "updateMask": "description",
+                                }
+                            }
+                        ]
+                    },
+                ).execute()
+                logger.info("Added description via batchUpdate")
+            except Exception as e:
+                logger.warning("⚠️ تعذر إضافة الوصف لاحقاً: %s", e)
+
         return created
+
     except HttpError as e:
         _log_http_error(e, "creating form")
         raise
+
 
 def build_choice_question_item(title: str, choices: List[str], correct_answer: str = None, points: int = 0) -> Dict[str, Any]:
     title = sanitize_text(title)
@@ -114,6 +142,7 @@ def build_choice_question_item(title: str, choices: List[str], correct_answer: s
         }
     }
 
+
 def update_form_with_requests(service, form_id: str, requests: List[Dict[str, Any]]):
     if not requests:
         logger.info("No requests to apply for form %s", form_id)
@@ -126,6 +155,7 @@ def update_form_with_requests(service, form_id: str, requests: List[Dict[str, An
         _log_http_error(e, f"batchUpdate on form {form_id}")
         raise
 
+
 def _log_http_error(e: HttpError, context_msg: str = ""):
     logger.error("HttpError while %s: %s", context_msg, e)
     try:
@@ -134,6 +164,7 @@ def _log_http_error(e: HttpError, context_msg: str = ""):
         logger.error("Error details: %s", json.dumps(parsed, indent=2, ensure_ascii=False))
     except Exception:
         logger.warning("Could not parse HttpError content: %s", getattr(e, 'content', None))
+
 
 def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
     if not os.path.exists(path):
@@ -161,6 +192,7 @@ def load_questions_from_txt(path: str) -> List[Dict[str, Any]]:
         if q['title'] and q['choices']:
             questions.append(q)
     return questions
+
 
 def main():
     parser = argparse.ArgumentParser(description='إنشاء Google Form من ملف نصي للأسئلة')
@@ -194,14 +226,6 @@ def main():
         item = build_choice_question_item(q['title'], q['choices'], q['correct'], q['points'])
         requests.append(item)
 
-    if args.description:
-        requests.append({
-            "updateFormInfo": {
-                "info": {"description": sanitize_text(args.description)},
-                "updateMask": "description"
-            }
-        })
-
     try:
         update_form_with_requests(service, form_id, requests)
     except Exception as e:
@@ -215,6 +239,7 @@ def main():
     print("📄 الاسم:", args.title)
     print("🆔 Form ID:", form_id)
     print("🔗 رابط النموذج:", form_url)
+
 
 if __name__ == '__main__':
     main()
